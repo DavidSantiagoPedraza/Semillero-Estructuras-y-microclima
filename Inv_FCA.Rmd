@@ -1,0 +1,241 @@
+---
+title: "Inv_FCA"
+author: "David Pedraza"
+date: "2024-08-29"
+output: html_document
+---
+
+```{r}
+#### Librerias necesarias para llevar a cabo el analisis 
+library(tidyverse) #funciones para ciencia de datos
+library(lubridate) #manejo de listas de fechas
+library(readxl) #Obtener datos de excel
+library(googledrive)
+
+
+##obtener hoja de calculo
+drive_auth()
+ClimaInvFCA1A = drive_find(pattern = "Datos_Invernadero 19-26 febrero")
+temp_file1 <- tempfile(fileext = ".xlsx")
+drive_download(ClimaInvFCA1A, path = temp_file1, overwrite = T)
+ClimaInvFCA1 = read_xlsx(temp_file1, skip = 2)
+
+ClimaInvFCA2A = drive_find(pattern = "z6-13472 17May24-0854") #Aqui buscamos el archivo en drive
+temp_file2 <- tempfile(fileext = ".xlsx") #Crea un archivo temporal
+drive_download(ClimaInvFCA2A, path = temp_file2, overwrite = T) #Descarga el archivo de drive y guarda en el archivo temporal creado
+ClimaInvFCA2 = read_xlsx(temp_file2, sheet = "DatosAjustados", skip=2)#lee y sube el archivo a Rstudio, con skip elimina el numero de filas que desee
+
+
+ClimaInvFCA10 <- ClimaInvFCA1[,c(1,2,3,4,5,8,13,14)] #Selecciona solo las columnas que desee
+
+```
+
+```{r}
+# Para saber que fechas tienen los datos completos 
+#table(ymd(format(as.Date(ClimaInvFCA10$Timestamp), "%Y-%m-%d")))
+
+ClimaInvFCA10$Fecha <- ymd(format(as.Date(ClimaInvFCA10$Timestamp), "%Y-%m-%d")) #obtiene la fecha en formato POSIXct y la transforma a formato de fecha.
+```
+```{r}
+#Filtrar por la primera etapa de recoleccion de datos
+start_date <- as.Date("2024-02-20")
+end_date <- as.Date("2024-02-25")
+
+ClimaInvFCA11 <- ClimaInvFCA10 %>%
+  filter(Fecha >= start_date & Fecha <= end_date)
+  
+#ClimaInvFCA2<- read_excel("z6-13472 17May24-0854.xlsx", sheet = "DatosAjustados", skip=2)
+ClimaInvFCA20 <- ClimaInvFCA2[,c(1,2,3,4,5,8,13,14)]
+ClimaInvFCA20$Fecha <- ymd(format(as.Date(ClimaInvFCA20$Timestamp), "%Y-%m-%d"))
+
+table(ClimaInvFCA20$Fecha) #Genera una tabla con la frecuencia de cada elemento del vector indexado
+```
+```{r}
+#start_date <- as.Date("2024-04-17")
+start_date <- as.Date("2024-04-17")
+end_date <- as.Date("2024-05-16")
+
+ClimaInvFCA22 <- ClimaInvFCA20 %>%
+  filter(Fecha >= start_date & Fecha <= end_date)
+
+ClimaInvFCA <- rbind(ClimaInvFCA11, ClimaInvFCA22) #Esta funcion se encarga de añadir filas colocando unas sobre la otra
+
+
+ClimaInvFCA$time <- hour(ClimaInvFCA$Timestamp) * 60 + minute(ClimaInvFCA$Timestamp) #Calcula el tiempo transcurrido en minutos
+```
+```{r}
+####
+ClimaInvFCA$DPV <- 0.611 * exp(17.502 * ClimaInvFCA$`°C Air Temperature` / (ClimaInvFCA$`°C Air Temperature` + 240.97)) * (1 - (ClimaInvFCA$`RH Relative Humidity`)) #Preguntar Deficit de presion de vapor
+
+
+
+ClimaInvFCA2 <-ClimaInvFCA[,c(9,10,2:8,11)] #Organizo las columnas a su gusto
+ClimaInvFCA3 <- gather(ClimaInvFCA2, "Variable", 'Valor', -c(1,2)); #Sirve para poner las columnas en las filas, el parametro -c(1,2) sirve para dar a entender que las columnas 1 y 2 no sean incluidas en la funcion
+```
+```{r}
+#Creacion del grafico ggplot:  ggplot(data = df, mapping = aes(x, y, other aesthetics))+
+ #                                    geom_<tipo>(<argumentos>)
+
+
+
+#GENERAR GRAFICO DE CAJA Y BIGOTES CON RESPECTO A LA FECHA
+
+#La sintaxis de este grafico es un grafico de dispersion ya que contiene la función "geom_point()"
+ggplot(ClimaInvFCA3, aes(x = Fecha, y = Valor, fill = factor(Fecha)))+ 
+  geom_boxplot()+#coord_flip()+
+  facet_wrap(.~ Variable, strip.position = 'left', scales = 'free_y', ncol = 1) +  #esta funcion genera la división del grafico en diferentes variables en cuadros independientes, la variables scales indica si existe independencia en la escala de cada uno de los cruadros o cada uno tiene su propa escala
+
+  theme_bw(base_size = 10) +  #este argumento controla el tema del grafico
+  theme(legend.position = "none")+
+  scale_x_date(breaks = seq(as.Date('2024-02-20'), as.Date('2024-05-16'), 'month'), #Modifica las etiquetas de la escala del eje x
+              date_labels = '%Y-%b')+
+  labs(x="Date", y='') #Cambia la etiqueta del eje x y y
+```
+```{r}
+#GENERAR GRAFICO DE LINEA CON RESPECTO A LA FECHA
+
+##1. Se crea un dataframe con la media de datos por DIA, teniendo en cuenta de filtrar datos nulos con la función !is.na()
+ClimaInvFCADia = summarise(group_by(ClimaInvFCA3[!is.na(ClimaInvFCA3$Valor),], Fecha, Variable), PromedioDato = as.numeric(format(mean(Valor, na.rm = TRUE), digits = 3))) # En esta función se tiene en cuenta agrupar el data frame "ClimaInvFCA3" con la Fecha y las variables, para despues calcular la media de cada variable por cada uno de los dias evaluados.
+
+
+      ##OTRA FORMA DE HACERLO
+#ClimaInvFCADia = ClimaInvFCA3[!is.na(ClimaInvFCA3$Valor),] %>%
+ # group_by(Fecha, Variable) %>%
+ # summarise(PromedioDato = as.numeric(format(mean(Valor, na.rm = TRUE), scientify=F, digits = 5)))
+
+
+
+ggplot(ClimaInvFCADia, aes(x = Fecha, y = PromedioDato, group = 1))+
+  #geom_bar(stat = "identity")+
+  geom_line(colour = "black")+
+  geom_point()+
+  facet_wrap(.~ Variable, strip.position = 'left', scales = 'free_y', ncol = 2)+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+    scale_x_date(breaks = seq(as.Date('2024-02-20'), as.Date('2024-05-16'), 'month'), #Modifica las etiquetas de la escala del eje x
+              date_labels = '%Y-%b')+
+  scale_y_continuous(breaks = pretty_breaks(n = 3))
+```
+```{r}
+####
+#Aqui se generan una serie de transformaciones en las cuales se agrupan datos, se hacen calculos y se crea un dataframe
+ClimaInvFCA4 <- ClimaInvFCA3 %>% 
+  group_by(time, Variable) %>%
+  summarise(AveValue=mean(Valor, na.rm = TRUE),
+            Sd_Value = sd(Valor, na.rm = TRUE),
+            n = n(),
+            se = sd(Valor, na.rm = TRUE) / sqrt(n()),  # Error estándar
+            ci_lower = mean(Valor, na.rm = TRUE) - qt(0.975, df = n-1) * se,  # Límite inferior del IC
+            ci_upper = mean(Valor, na.rm = TRUE) + qt(0.975, df = n-1) * se,
+            MaxVal= max(Valor, na.rm = TRUE),
+            MinVal= min(Valor, na.rm = TRUE) ) %>%   # Límite superior del IC
+  data.frame()
+
+unique(ClimaInvFCA4$Variable) #Se obtiene los elementos que hay en el vector
+```
+
+###Graficos encontrados
+```{r}
+#VELOCIDAD DEL VIENTO: 
+
+#GRAFICO DE VIOLIN de Caja y Vigotes
+ggplot(data = ClimaInvFCA3[ClimaInvFCA3$Variable=="W/m² Solar Radiation" & !is.na(ClimaInvFCA3$Valor),], aes(x = factor(Fecha), y = Valor))+  #Los datos subidos se tranforman para depurar datos nulos y los valores de fecha se vuelen categoricos con la función de factor
+  
+  geom_violin()+ #Generar grafico de violin
+  geom_boxplot(width = 0.2)+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+ #Se cambia el diseño del grafico
+  labs(x="Fecha")
+```
+```{r}
+#LINEA DE TIEMPO
+ggplot(data = ClimaInvFCA4[ClimaInvFCA4$Variable=="m/s Wind Speed",], aes(x = factor(time), y = AveValue, group = 1))+  #Se hizo el filtrado de datos a la velocidad del viento, se tuvo en cuenta categorizar la variable x con la función factor() y se agruparon todas las categorias generadas en X en un 1 grupo para que saliera constante.
+  
+  geom_line( color="steelblue")+ #Se realiza grafica de lineas
+  
+  geom_point(size = 0.8)+ #Se realiza grafico de dispersión (puntos)
+  scale_x_discrete(breaks = c(1 * 60, 3*60, 6 * 60, 9*60, 12 * 60, 15*60, 18 * 60, 21*60, 23 * 60))+ #Se cambia la escala del eje X para que sea mas visible
+  
+  theme(axis.text.x=element_text(angle=60, hjust=1))+ #Se cambia el diseño del grafico
+  
+  geom_smooth(method = "loess", color = "red", se = FALSE)+ # hace una linea de tendencia suavisada del grafico original
+  labs(x="Minuto del dia", y="m/s", title = "Velocidad del viento") #Se cambia el nombre de los valores de los eje.
+```
+```{r}
+#TEMPERATURA
+#Grafico de linea de la temperatura
+ggplot(ClimaInvFCA4[ClimaInvFCA4$Variable=="°C Air Temperature",], aes(x = factor(time), y = AveValue, group = 1))+
+  geom_line( color="black")+
+  geom_point(size = 0.6, colour = "red")+
+  scale_x_discrete(breaks = c(1 * 60, 3*60, 6 * 60, 9*60, 12 * 60, 15*60, 18 * 60, 21*60, 23 * 60))+ #Se cambia la escala del eje X para que sea mas visible
+  
+  labs(x="Minuto del dia", y="Grados Celcius", title = "Temperatura del aire") #Se cambia el nombre de los valores de los eje.
+```
+```{r}
+#DEFICIT DE PRESION DE VAPOR
+#Grafico de barras: para realizar un grafico de barras en función del minuto del dia, es necesario hacer una agrupación por intervalos
+
+ClimaInvFCAHora = mutate(.data = ClimaInvFCA4[ClimaInvFCA4$Variable=="DPV",], IntervaloHoras = cut(time, breaks = seq(0, 1440, by = 60), right = F, dig.lab = 5)) #Esta función genera una nueva columna "Categorica" con los intervalos de minuto por hora. El parametro right hace que el intervalo sea cerrado a la izq y abierto a la derec. El parametro dig.lab define el numero de decimales o de digitos en la etiqueta.
+
+ClimaInvFCAHoraDPV = summarise(group_by(ClimaInvFCAHora, IntervaloHoras), PromedioHora = mean(AveValue))
+
+ggplot(ClimaInvFCAHoraDPV, aes(x = factor(c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24)), y = PromedioHora))+
+  geom_bar(stat = "identity")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
+  labs(x="Hora del dia", y="DPV", title = "Deficit de presión de vapor")+ #Se cambia el nombre de los valores de los eje.
+
+  geom_text(aes(label = round(PromedioHora, 1)), vjust = -0.5, color = "black", size = 2)
+```
+```{r}
+#GRAFICO DE LINEA GENERAL:
+ggplot(ClimaInvFCA4[ClimaInvFCA4$Variable!="mm Precipitation",], aes(x = time, y = AveValue))+
+  geom_line()+
+  facet_wrap(.~ Variable, strip.position = 'top', scales = 'free_y', ncol = 2, drop = T)+
+  scale_x_continuous(breaks = c(1 * 60, 3*60, 6 * 60, 9*60, 12 * 60, 15*60, 18 * 60, 21*60, 23 * 60))+ #Se cambia la escala del eje X para que sea mas visible
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(x="Minuto del dia", y="Media", title = "Variables climatica") #Se cambia el nombre de los valores de los eje.
+```
+
+###Graficos Lady Diana
+```{r}
+# Definir el factor de escala
+scale_factor <- 0.06
+
+# Crear el gráfico
+ggplot() + 
+  theme_bw(base_size = 14) +
+  geom_line(data = ClimaInvFCA4[ClimaInvFCA4$Variable == "°C Air Temperature", ], 
+            aes(x = time, y = AveValue, color = "°C Air Temperature", linetype = "°C Air Temperature")) +
+  geom_ribbon(data = subset(ClimaInvFCA4, Variable == "°C Air Temperature"), 
+              aes(x = time, ymin = MinVal, ymax = MaxVal, fill = "°C Air Temperature"), alpha = 0.3) +
+  geom_line(data = subset(ClimaInvFCA4, Variable == "DPV"), 
+            aes(x = time, y = AveValue / scale_factor, color = "DPV", linetype = "DPV")) +
+  geom_ribbon(data = subset(ClimaInvFCA4, Variable == "DPV"), 
+              aes(x = time, ymin = ci_lower / scale_factor, ymax = ci_upper / scale_factor, fill = "DPV"), alpha = 0.4) +
+  scale_y_continuous(
+    name = expression("°C Air Temperature"),
+    limits = c(0, 42),  
+    sec.axis = sec_axis(~ . * scale_factor, name = "DPV", breaks = seq(0, 3, by = 0.5))
+  ) +
+  scale_color_manual(
+    name = "Variable",
+    values = c("°C Air Temperature" = "orange", "DPV" = "red")
+  ) +
+  scale_linetype_manual(
+    name = "Variable",  # Asegurar que la leyenda use el mismo nombre
+    values = c("°C Air Temperature" = "longdash", "DPV" = "solid")
+  ) +
+  scale_fill_manual(
+    name = "Variable",
+    values = c("°C Air Temperature" = "orange", "DPV" = "red")
+  ) +
+  scale_x_continuous(breaks = c(1 * 60, 6 * 60, 12 * 60, 18 * 60, 24 * 60)) +
+  labs(x = "Time", y = expression("°C Air Temperature")) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.title = element_blank(),
+    legend.box.background = element_rect(colour = "black")
+  )
+```
+
+
+
